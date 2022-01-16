@@ -55,7 +55,6 @@ class DreamerV2:
 		self._driver.on_step(self._replay.add_step)
 		self._driver.on_reset(self._replay.add_step)
 
-		self._should_train = common.Every(self._config.train_every)
 		self._should_log = common.Every(self._config.log_every)
 		self._should_video = common.Every(self._config.log_every)
 		self._should_expl = common.Until(self._config.expl_until)
@@ -124,24 +123,26 @@ class DreamerV2:
 	def _on_per_train_episode(self, ep):
 		if self._should_log(self._step):
 			for name, values in self._metrics.items():
+				print(name, values)
 				self._logger.scalar(name, np.array(values, np.float64).mean())
 				self._metrics[name].clear()
 			self._logger.add(self._agent.report(next(self._dataset)))
 			self._logger.write(fps=True)
 
 	def train(self):
-		# training
 		self._driver.on_episode(self._on_per_train_episode)
 		while self._step < self._config.steps:
-			self._driver(self._policy, steps=self._config.eval_every)
-			if self._should_train(self._step):
-				for _ in range(self._config.train_steps):
-					mets = self._train_agent(next(self._dataset))
-					[self._metrics[key].append(value) for key, value in mets.items()]
-			[func(self._episodes_per_train_epoch) for func in self._on_per_train_epoch_funcs] # callback
-			self._episodes_per_train_epoch = []
+			# rollout
+			self._driver(self._policy, episodes=self._config.rollout_episodes)
+			# train
+			for _ in range(self._config.train_steps):
+				mets = self._train_agent(next(self._dataset))
+				[self._metrics[key].append(value) for key, value in mets.items()]
 			# save policy
 			self._agent.save(self._logdir / 'variables.pkl')
+			# callback
+			[func(self._episodes_per_train_epoch) for func in self._on_per_train_epoch_funcs] 
+			self._episodes_per_train_epoch = []
 
 if __name__ == '__main__':
 	config = defaults.update({

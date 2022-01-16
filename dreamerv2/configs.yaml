@@ -11,14 +11,15 @@ defaults:
   atari_grayscale: True
   time_limit: 0
   action_repeat: 1
-  steps: 1e8
   log_every: 1e4
   eval_every: 1e5
   eval_eps: 1
   prefill: 10000
   pretrain: 1
   train_every: 5
-  train_steps: 1
+  steps: 1e8    # total step
+  rollout_episodes: 1 # rollout episodes during one train epoch
+  train_steps: 1 # train steps during one train epoch
   expl_until: 0
   replay: {capacity: 2e6, ongoing: False, minlen: 50, maxlen: 50, prioritize_ends: True}
   dataset: {batch: 16, length: 50}
