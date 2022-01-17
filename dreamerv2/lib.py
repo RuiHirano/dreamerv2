@@ -67,6 +67,9 @@ class DreamerV2:
 	def on_per_train_epoch(self, func):
 		self._on_per_train_epoch_funcs.append(func)
 
+	def get_replay_episodes(self):
+		return self._replay._complete_eps
+
 	def _create_env(self, env, config):
 		env = common.GymWrapper(env)
 		env = common.ResizeImage(env)
@@ -100,7 +103,6 @@ class DreamerV2:
 			self._driver.reset()
 
 	def _on_per_episode(self, ep):
-		self._episodes_per_train_epoch.append(ep)
 		self._replay.add_episode(ep)
 		length = len(ep['reward']) - 1
 		score = float(ep['reward'].astype(np.float64).sum())
@@ -121,6 +123,7 @@ class DreamerV2:
 		self._logger.write()
 	
 	def _on_per_train_episode(self, ep):
+		self._episodes_per_train_epoch.append(ep)
 		if self._should_log(self._step):
 			for name, values in self._metrics.items():
 				print(name, values)
@@ -131,6 +134,7 @@ class DreamerV2:
 
 	def train(self):
 		self._driver.on_episode(self._on_per_train_episode)
+		self._episodes_per_train_epoch = []
 		while self._step < self._config.steps:
 			# rollout
 			self._driver(self._policy, episodes=self._config.rollout_episodes)
@@ -141,8 +145,7 @@ class DreamerV2:
 			# save policy
 			self._agent.save(self._logdir / 'variables.pkl')
 			# callback
-			[func(self._episodes_per_train_epoch) for func in self._on_per_train_epoch_funcs] 
-			self._episodes_per_train_epoch = []
+			[func(self._episodes_per_train_epoch) for func in self._on_per_train_epoch_funcs]
 
 if __name__ == '__main__':
 	config = defaults.update({
