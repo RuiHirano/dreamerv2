@@ -57,6 +57,7 @@ class DreamerV2:
 
 		self._should_log = common.Every(self._config.log_every)
 		self._should_video = common.Every(self._config.log_every)
+		self._should_save = common.Every(self._config.save_every)
 		self._should_expl = common.Until(self._config.expl_until)
 
 		# 1. prefill dataset
@@ -68,7 +69,7 @@ class DreamerV2:
 		self._on_per_train_epoch_funcs.append(func)
 
 	def get_replay_episodes(self):
-		return self._replay._complete_eps
+		return self._replay._complete_eps.values()
 
 	def _create_env(self, env, config):
 		env = common.GymWrapper(env)
@@ -143,7 +144,8 @@ class DreamerV2:
 				mets = self._train_agent(next(self._dataset))
 				[self._metrics[key].append(value) for key, value in mets.items()]
 			# save policy
-			self._agent.save(self._logdir / 'variables.pkl')
+			if self._should_save(self._step):
+				self._agent.save(self._logdir / 'variables.pkl')
 			# callback
 			[func(self._episodes_per_train_epoch) for func in self._on_per_train_epoch_funcs]
 
