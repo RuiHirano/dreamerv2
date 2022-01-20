@@ -147,6 +147,49 @@ class DreamerV2:
 			# callback
 			[func(self._episodes_per_train_epoch) for func in self._on_per_train_epoch_funcs]
 
+class DreamerV2Agent:
+	def __init__(self, env, config, type="atari"):
+		config = config.update(configs['atari'])
+
+		logdir = pathlib.Path(config.logdir).expanduser()
+
+		replay = common.Replay(logdir / 'eval_episodes', **config.replay)
+		step = common.Counter(replay.stats['total_steps'])
+
+		def make_env():
+			suite, task = "atari_pong".split('_', 1)
+			env = common.Atari(
+				task, config.action_repeat, config.render_size,
+				config.atari_grayscale)
+			env = common.OneHotAction(env)
+			env = common.TimeLimit(env, config.time_limit)
+			return env
+		self._env = make_env()
+		'''env = common.GymWrapper(env)
+		env = common.ResizeImage(env)
+		if hasattr(env.act_space['action'], 'n'):
+			env = common.OneHotAction(env)
+		else:
+			env = common.NormalizeAction(env)
+		env = common.TimeLimit(env, config.time_limit)'''
+
+		print('Create agent.')
+		self.agnt = agent.Agent(config, self._env.obs_space, self._env.act_space, step)
+		dataset = iter(replay.dataset(**config.dataset))
+		train_agent = common.CarryOverState(self.agnt.train)
+		train_agent(next(dataset))
+		self.agnt.load(logdir / "variables.pkl")
+		self._state = None
+		self._ob = None
+		self._result = {"step": 0, "total_reward": 0}
+		self._driver = common.Driver([self._env])
+
+	def on_episode(self, fn):
+		self._driver.on_episode(fn)
+
+	def run_driver(self, num_episodes):
+		self._driver(self.agnt.policy, episodes=num_episodes)
+
 if __name__ == '__main__':
 	config = defaults.update({
 		'logdir': '~/logdir/breakout',
