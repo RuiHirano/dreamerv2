@@ -18,7 +18,7 @@ RUN mkdir -p /root/.mujoco && \
 
 # Python packages.
 RUN pip3 install --no-cache-dir \
-  'gym[atari]' \
+  'gym[atari]==0.15.7' \
   atari_py \
   crafter \
   dm_control \
@@ -46,4 +46,4 @@ CMD [ \
   "--logdir", "/logdir/$(date +%Y%m%d-%H%M%S)", \
   "--configs", "defaults", "atari", \
   "--task", "atari_pong" \
-]
+  ]
