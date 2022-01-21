@@ -127,7 +127,6 @@ class DreamerV2:
 		self._episodes_per_train_epoch.append(ep)
 		if self._should_log(self._step):
 			for name, values in self._metrics.items():
-				print(name, values)
 				self._logger.scalar(name, np.array(values, np.float64).mean())
 				self._metrics[name].clear()
 			self._logger.add(self._agent.report(next(self._dataset)))
