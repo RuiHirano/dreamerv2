@@ -5,6 +5,7 @@ import pathlib
 import re
 import sys
 import warnings
+import gym
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 logging.getLogger().setLevel('ERROR')
