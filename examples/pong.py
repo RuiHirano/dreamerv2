@@ -6,7 +6,6 @@ config = dv2.defaults.update({
     'resize': [64, 64],
     'grayscale': True,
     'log_every': 1e3,
-    'train_every': 10,
     'prefill': 1e5,
     'save_every': 1e5
 }).parse_flags()
