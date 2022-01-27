@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
   python3-pip \
   unrar \
   wget \
+  vim \
   && apt-get clean
 
 # MuJoCo.

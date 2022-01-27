@@ -57,6 +57,7 @@ class DreamerV2:
 
 		self._should_log = common.Every(self._config.log_every)
 		self._should_video = common.Every(self._config.log_every)
+		self._should_train = common.Every(config.train_every)
 		self._should_save = common.Every(self._config.save_every)
 		self._should_expl = common.Until(self._config.expl_until)
 
@@ -73,7 +74,10 @@ class DreamerV2:
 
 	def _create_env(self, env, config):
 		env = common.GymWrapper(env)
-		env = common.ResizeImage(env)
+		if self._config.resize:
+			env = common.ResizeImage(env, size=(self._config.resize[0], self._config.resize[1]))
+		if self._config.grayscale:
+			env = gym.wrappers.GrayScaleObservation(env, keep_dim=True)
 		if hasattr(env.act_space['action'], 'n'):
 			env = common.OneHotAction(env)
 		else:
@@ -132,8 +136,21 @@ class DreamerV2:
 			self._logger.add(self._agent.report(next(self._dataset)))
 			self._logger.write(fps=True)
 
+	def _on_per_train_step(self, tran, worker):
+		if self._should_train(self._step):
+			for _ in range(self._config.train_steps):
+				mets = self._train_agent(next(self._dataset))
+				[self._metrics[key].append(value) for key, value in mets.items()]
+		if self._should_log(self._step):
+			for name, values in self._metrics.items():
+				self._logger.scalar(name, np.array(values, np.float64).mean())
+				self._metrics[name].clear()
+			self._logger.add(self._agent.report(next(self._dataset)))
+			self._logger.write(fps=True)
+
 	def train(self):
 		self._driver.on_episode(self._on_per_train_episode)
+		#self._driver.on_step(self._on_per_train_step)
 		self._episodes_per_train_epoch = []
 		while self._step < self._config.steps:
 			# rollout
@@ -157,7 +174,7 @@ class DreamerV2Agent:
 		replay = common.Replay(logdir / 'eval_episodes', **config.replay)
 		step = common.Counter(replay.stats['total_steps'])
 
-		def make_env():
+		'''def make_env():
 			suite, task = "atari_pong".split('_', 1)
 			env = common.Atari(
 				task, config.action_repeat, config.render_size,
@@ -165,14 +182,16 @@ class DreamerV2Agent:
 			env = common.OneHotAction(env)
 			env = common.TimeLimit(env, config.time_limit)
 			return env
+		self._env = make_env()'''
+		def make_env(env):
+			env = common.GymWrapper(env)
+			env = common.ResizeImage(env)
+			if hasattr(env.act_space['action'], 'n'):
+				env = common.OneHotAction(env)
+			else:
+				env = common.NormalizeAction(env)
+			env = common.TimeLimit(env, config.time_limit)
 		self._env = make_env()
-		'''env = common.GymWrapper(env)
-		env = common.ResizeImage(env)
-		if hasattr(env.act_space['action'], 'n'):
-			env = common.OneHotAction(env)
-		else:
-			env = common.NormalizeAction(env)
-		env = common.TimeLimit(env, config.time_limit)'''
 
 		print('Create agent.')
 		self.agnt = agent.Agent(config, self._env.obs_space, self._env.act_space, step)
