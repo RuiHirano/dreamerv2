@@ -74,9 +74,9 @@ class DreamerV2:
 
 	def _create_env(self, env, config):
 		env = common.GymWrapper(env)
-		if self._config.resize:
-			env = common.ResizeImage(env, size=(self._config.resize[0], self._config.resize[1]))
-		if self._config.grayscale:
+		if config.resize:
+			env = common.ResizeImage(env, size=(config.resize[0], config.resize[1]))
+		if config.grayscale:
 			env = gym.wrappers.GrayScaleObservation(env, keep_dim=True)
 		if hasattr(env.act_space['action'], 'n'):
 			env = common.OneHotAction(env)
