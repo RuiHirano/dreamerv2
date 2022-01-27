@@ -74,11 +74,13 @@ class DreamerV2:
 		return self._replay._complete_eps.values()
 
 	def _create_env(self, env, config):
-		env = common.GymWrapper(env)
 		if config.resize:
-			env = common.ResizeImage(env, size=(config.resize[0], config.resize[1]))
+			env = gym.wrappers.ResizeObservation(env, (64, 64))
 		if config.grayscale:
 			env = gym.wrappers.GrayScaleObservation(env, keep_dim=True)
+		env = common.GymWrapper(env)
+		#if config.resize:
+		#	env = common.ResizeImage(env, size=(config.resize[0], config.resize[1]))
 		if hasattr(env.act_space['action'], 'n'):
 			env = common.OneHotAction(env)
 		else:
