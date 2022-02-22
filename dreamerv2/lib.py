@@ -32,11 +32,14 @@ configs = yaml.safe_load(
 defaults = common.Config(configs.pop('defaults'))
 
 class DreamerV2:
-	def __init__(self, env, config):
+	def __init__(self, env, eval_env, config):
 		self._env = self._create_env(env, config)
+		self._eval_env = self._create_env(eval_env, config)
 		self._config = config
 		self._on_per_train_epoch_funcs = []
+		self._on_per_train_step_funcs = []
 		self._episodes_per_train_epoch = []
+		self._episodes_per_train_step = []
 
 		self._logdir = pathlib.Path(self._config.logdir).expanduser()
 		self._logdir.mkdir(parents=True, exist_ok=True)
@@ -47,17 +50,25 @@ class DreamerV2:
     		common.TensorBoardOutput(self._config.logdir),
 		]
 		self._replay = common.Replay(self._logdir / 'train_episodes', **self._config.replay)
+		self._eval_replay = common.Replay(self._logdir / 'eval_episodes', **dict(
+      		capacity=config.replay.capacity // 10,
+      		minlen=config.dataset.length,
+      		maxlen=config.dataset.length))
 		self._step = common.Counter(self._replay.stats['total_steps'])
 		self._logger = common.Logger(self._step, outputs, multiplier=self._config.action_repeat)
 		self._metrics = collections.defaultdict(list)
 		self._driver = common.Driver([self._env])
-		self._driver.on_episode(self._on_per_episode)
+		self._driver.on_episode(lambda ep: self._on_per_episode(ep, mode='train'))
 		self._driver.on_step(lambda tran, worker: self._step.increment())
 		self._driver.on_step(self._replay.add_step)
 		self._driver.on_reset(self._replay.add_step)
+		self._eval_driver = common.Driver([self._eval_env])
+		self._eval_driver.on_episode(lambda ep: self._on_per_episode(ep, mode='eval'))
+		self._eval_driver.on_episode(self._eval_replay.add_episode)
 
 		self._should_log = common.Every(self._config.log_every)
 		self._should_video = common.Every(self._config.log_every)
+		self._should_video_eval = common.Every(self._config.log_every)
 		self._should_train = common.Every(config.train_every)
 		self._should_save = common.Every(self._config.save_every)
 		self._should_expl = common.Until(self._config.expl_until)
@@ -70,6 +81,9 @@ class DreamerV2:
 	def on_per_train_epoch(self, func):
 		self._on_per_train_epoch_funcs.append(func)
 
+	def on_per_train_step(self, func):
+		self._on_per_train_step_funcs.append(func)
+
 	def get_replay_episodes(self):
 		return self._replay._complete_eps.values()
 
@@ -79,8 +93,6 @@ class DreamerV2:
 		if config.grayscale:
 			env = gym.wrappers.GrayScaleObservation(env, keep_dim=True)
 		env = common.GymWrapper(env)
-		#if config.resize:
-		#	env = common.ResizeImage(env, size=(config.resize[0], config.resize[1]))
 		if hasattr(env.act_space['action'], 'n'):
 			env = common.OneHotAction(env)
 		else:
@@ -89,8 +101,10 @@ class DreamerV2:
 		return env
 
 	def _create_agent(self):
+		print('Create Agent')
 		self._agent = agent.Agent(self._config, self._env.obs_space, self._env.act_space, self._step)
 		self._dataset = iter(self._replay.dataset(**self._config.dataset))
+		self._eval_dataset = iter(self._eval_replay.dataset(**self._config.dataset))
 		self._train_agent = common.CarryOverState(self._agent.train)
 		self._train_agent(next(self._dataset))
 		if (self._logdir / 'variables.pkl').exists():
@@ -101,6 +115,7 @@ class DreamerV2:
 				self._train_agent(next(self._dataset))
 		self._policy = lambda *args: self._agent.policy(
     		*args, mode='explore' if self._should_expl(self._step) else 'train')
+		self._eval_policy = lambda *args: self._agent.policy(*args, mode='eval')
 
 	def _prefill(self):
 		prefill = max(0, self._config.prefill - self._replay.stats['total_steps'])
@@ -108,30 +123,39 @@ class DreamerV2:
 			print(f'Prefill dataset ({prefill} steps).')
 			random_agent = common.RandomAgent(self._env.act_space)
 			self._driver(random_agent, steps=prefill, episodes=1)
+			self._eval_driver(random_agent, episodes=1)
 			self._driver.reset()
+			self._eval_driver.reset()
 
-	def _on_per_episode(self, ep):
+	def _on_per_episode(self, ep, mode):
 		self._replay.add_episode(ep)
 		length = len(ep['reward']) - 1
 		score = float(ep['reward'].astype(np.float64).sum())
-		print(f'Episode has {length} steps and return {score:.1f}.')
-		self._logger.scalar('return', score)
-		self._logger.scalar('length', length)
+		print(f'{mode.title()} Episode has {length} steps and return {score:.1f}.')
+		self._logger.scalar(f'{mode}_return', score)
+		self._logger.scalar(f'{mode}_length', length)
 		for key, value in ep.items():
 			if re.match(self._config.log_keys_sum, key):
-				self._logger.scalar(f'sum_{key}', ep[key].sum())
+				self._logger.scalar(f'sum_{mode}_{key}', ep[key].sum())
 			if re.match(self._config.log_keys_mean, key):
-				self._logger.scalar(f'mean_{key}', ep[key].mean())
+				self._logger.scalar(f'mean_{mode}_{key}', ep[key].mean())
 			if re.match(self._config.log_keys_max, key):
-				self._logger.scalar(f'max_{key}', ep[key].max(0).mean())
-		if self._should_video(self._step):
+				self._logger.scalar(f'max_{mode}_{key}', ep[key].max(0).mean())
+		should = {'train': self._should_video, 'eval': self._should_video_eval}[mode]
+		if should(self._step):
 			for key in self._config.log_keys_video:
-				self._logger.video(f'policy_{key}', ep[key])
-		self._logger.add(self._replay.stats)
+				self._logger.video(f'{mode}_policy_{key}', ep[key])
+		replay = dict(train=self._replay, eval=self._eval_replay)[mode]
+		self._logger.add(replay.stats, prefix=mode)
 		self._logger.write()
 	
 	def _on_per_train_episode(self, ep):
 		self._episodes_per_train_epoch.append(ep)
+		self._episodes_per_train_step.append(ep)
+		'''if self._should_train(self._step):
+			for _ in range(self._config.train_steps):
+				mets = self._train_agent(next(self._dataset))
+				[self._metrics[key].append(value) for key, value in mets.items()]'''
 		if self._should_log(self._step):
 			for name, values in self._metrics.items():
 				self._logger.scalar(name, np.array(values, np.float64).mean())
@@ -155,18 +179,30 @@ class DreamerV2:
 		self._driver.on_episode(self._on_per_train_episode)
 		#self._driver.on_step(self._on_per_train_step)
 		self._episodes_per_train_epoch = []
+		self._episodes_per_train_step = []
 		while self._step < self._config.steps:
-			# rollout
-			self._driver(self._policy, episodes=self._config.rollout_episodes)
-			# train
-			for _ in range(self._config.train_steps):
+			for i in range(self._config.train_steps):
+				# rollout
+				self._driver(self._policy, episodes=self._config.rollout_episodes)
+				# train
+				print('[train {}]'.format(i))
 				mets = self._train_agent(next(self._dataset))
 				[self._metrics[key].append(value) for key, value in mets.items()]
+				flags = [func(self._episodes_per_train_step) for func in self._on_per_train_step_funcs]
+				if flags.count(True) > 0:
+					print("break")
+					self._episodes_per_train_step = []
+					break
+				
+			# eval
+			self._logger.add(self._agent.report(next(self._eval_dataset)), prefix='eval')
+			self._eval_driver(self._eval_policy, episodes=self._config.eval_episodes)
 			# save policy
 			if self._should_save(self._step):
 				self._agent.save(self._logdir / 'variables.pkl')
 			# callback
 			[func(self._episodes_per_train_epoch) for func in self._on_per_train_epoch_funcs]
+			self._episodes_per_train_epoch = []
 
 class DreamerV2Agent:
 	def __init__(self, env, config, type="atari"):
@@ -177,7 +213,7 @@ class DreamerV2Agent:
 		replay = common.Replay(logdir / 'eval_episodes', **config.replay)
 		step = common.Counter(replay.stats['total_steps'])
 
-		'''def make_env():
+		def make_env():
 			suite, task = "atari_pong".split('_', 1)
 			env = common.Atari(
 				task, config.action_repeat, config.render_size,
@@ -185,8 +221,8 @@ class DreamerV2Agent:
 			env = common.OneHotAction(env)
 			env = common.TimeLimit(env, config.time_limit)
 			return env
-		self._env = make_env()'''
-		def make_env(env):
+		self._env = make_env()
+		'''def make_env(env):
 			env = common.GymWrapper(env)
 			env = common.ResizeImage(env)
 			if hasattr(env.act_space['action'], 'n'):
@@ -194,7 +230,7 @@ class DreamerV2Agent:
 			else:
 				env = common.NormalizeAction(env)
 			env = common.TimeLimit(env, config.time_limit)
-		self._env = make_env()
+		self._env = make_env(env)'''
 
 		print('Create agent.')
 		self.agnt = agent.Agent(config, self._env.obs_space, self._env.act_space, step)

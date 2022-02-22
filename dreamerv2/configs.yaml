@@ -20,9 +20,13 @@ defaults:
   train_every: 5
   steps: 1e8    # total step
   rollout_episodes: 1 # rollout episodes during one train epoch
+  eval_episodes: 1 # rollout episodes during one train epoch
   train_steps: 1 # train steps during one train epoch
+  stop:
+    reward_mean: 0.5
+    latest_target_num: 10
   grayscale: True
-  resize: [64, 64]
+  resize: None
   expl_until: 0
   replay: {capacity: 2e6, ongoing: False, minlen: 50, maxlen: 50, prioritize_ends: True}
   dataset: {batch: 16, length: 50}
